@@ -38,14 +38,38 @@
         }
         .right-sidebar {
             width: 250px;
-            padding: 10px;
+            padding: 0;
             border-left: 1px solid #444444;
             display: flex;
             flex-direction: column;
             flex-shrink: 0;
             position: relative;
-            background-color: #f0f0f0;
+            background-color: #EBEBEB;
             color: black;
+        }
+
+        .preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px;
+            border-bottom: 1px solid #444444;
+            height: 36px;
+            box-sizing: border-box;
+            background-color: #1877f2;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .preview-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        #preview-container {
+            flex-grow: 1;
+            padding: 10px;
+            position: relative;
             overflow-y: auto;
         }
         #right-sidebar-resizer {
@@ -344,6 +368,10 @@
         }
         .thumbnail-wrapper.selected .thumbnail {
             box-shadow: 0 0 0 3px #007bff, 0 4px 8px rgba(0,0,0,0.4);
+        }
+
+        .thumbnail-wrapper.list-view.selected {
+            background-color: #d4e8ff;
         }
 
         #multi-select-btn.active {
@@ -739,6 +767,7 @@
                             <input type="text" id="project-username-input" style="width: 100%; box-sizing: border-box; background-color: #ffffff; border: 1px solid #444; color: black; padding: 4px;">
                         </div>
                         <a href="#" id="rename-canvas-btn">Rename Canvas</a>
+                        <a href="#" id="manual-rename-btn">Manual Rename</a>
                         <a href="#" id="scan-for-buttons-btn">Scan for Buttons</a>
                         <a href="#" id="remove-all-buttons-btn">Remove All Buttons</a>
                         <div class="nested-dropdown" id="thumbnails-menu">
@@ -831,6 +860,7 @@
                 <button id="close-canvas-btn" disabled>Close Canvas</button>
                 <button id="toggle-last-canvas-btn" style="display: none;">Toggle Last</button>
                 <button id="play-btn" disabled>Play</button>
+                <button id="delete-selected-btn" disabled>Delete</button>
                 <button id="preview-btn">Preview</button>
             </div>
             <div id="content-area" style="display: flex; flex-grow: 1; overflow: hidden;">
@@ -840,7 +870,7 @@
                 </div>
                 <div class="right-sidebar" id="right-sidebar" style="display: none;">
                     <div id="right-sidebar-resizer"></div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="preview-header">
                         <h3>Preview</h3>
                         <select id="preview-size-selector">
                             <option value="list">List</option>
@@ -1061,7 +1091,10 @@
                 previewThumbnailSize: '0.5',
                 addWritingElement: false,
                 writingElementNumber: 1,
-                hiddenOrphans: []
+                hiddenOrphans: [],
+                listViewShowThumbnails: false,
+                listViewShowCanvasName: false,
+                listViewShowNewFilename: false
             };
 
             if (rawData) {
@@ -1315,6 +1348,7 @@
             const editModeBtn = document.getElementById('edit-mode-btn');
             const inEditMode = editModeBtn && editModeBtn.textContent.includes('On');
             const renameBtn = document.getElementById('rename-btn');
+            const deleteBtn = document.getElementById('delete-selected-btn');
 
             if (inEditMode) {
                 playBtn.disabled = playSelections.size === 0;
@@ -1322,6 +1356,7 @@
                 sendToCanvasSelect.disabled = true;
                 hideBtn.disabled = true;
                 renameBtn.disabled = true; // Disable in edit mode
+                deleteBtn.disabled = true;
             } else {
                 const numThumbSelected = selectedThumbnails.size;
                 const numButtonSelected = buttonsForRemoval.size;
@@ -1330,6 +1365,7 @@
                 splitBtn.disabled = numThumbSelected === 0;
                 sendToCanvasSelect.disabled = numThumbSelected === 0;
                 hideBtn.disabled = numThumbSelected === 0;
+                deleteBtn.disabled = numThumbSelected === 0;
 
                 const currentCanvas = canvases.get(activeCanvasId);
                 const isRenamedCanvas = currentCanvas && currentCanvas.name === 'Renamed';
@@ -1699,6 +1735,29 @@
             }
         });
 
+        document.getElementById('manual-rename-btn').addEventListener('click', () => {
+            if (sizeSelector.value !== 'list') {
+                alert('Manual rename is only available in list view.');
+                return;
+            }
+            if (selectedThumbnails.size !== 1) {
+                alert('Please select exactly one file to rename.');
+                return;
+            }
+
+            const thumbnailWrapper = selectedThumbnails.values().next().value;
+            const currentFilename = thumbnailWrapper.dataset.fileName;
+            const newFilename = prompt('Enter new filename:', currentFilename);
+
+            if (newFilename && newFilename.trim() !== '') {
+                const trimmedNewFilename = newFilename.trim();
+                thumbnailWrapper.dataset.fileName = trimmedNewFilename;
+                thumbnailWrapper.querySelector('.thumbnail-name').textContent = trimmedNewFilename;
+                thumbnailWrapper.querySelector('.new-filename-placeholder').textContent = trimmedNewFilename;
+                saveCanvasState();
+            }
+        });
+
         renameBtn.addEventListener('click', () => {
             const lastClickedButtonData = JSON.parse(renameBtn.dataset.lastClicked || 'null');
             if (!lastClickedButtonData) {
@@ -1792,7 +1851,7 @@
 
             updateSidebarActionButtonsState();
             updateBottomBarInfo(); // Re-show sidebar button info
-            updatePreviewPanel(); // Refresh the preview panel
+            updatePreviewPanel(lastClickedButtonData); // Refresh the preview panel
         });
 
         removeAllButtonsBtn.addEventListener('click', () => {
@@ -2141,6 +2200,21 @@
                 loadVideo(0);
             }
         });
+
+        document.getElementById('delete-selected-btn').addEventListener('click', () => {
+            let deletedCanvas = Array.from(canvases.values()).find(c => c.name === 'Deleted');
+            if (!deletedCanvas) {
+                const newCanvasId = getNextCanvasId();
+                deletedCanvas = { id: newCanvasId, name: 'Deleted', thumbnails: [], settings: { thumbnailSize: '1' } };
+                canvases.set(newCanvasId, deletedCanvas);
+            }
+
+            selectedThumbnails.forEach(thumb => {
+                thumb.dataset.previousCanvasId = activeCanvasId;
+            });
+            
+            sendThumbnailsToCanvas(deletedCanvas.id);
+        });
         videoCloseBtn.addEventListener('click', () => {
             videoOverlay.style.display = 'none';
             videoPlayer.pause();
@@ -2191,14 +2265,29 @@
 
         showThumbnailsBtn.addEventListener('click', () => {
             showThumbnailsBtn.classList.toggle('active');
+            if (directoryName) {
+                const projectData = loadProjectData(directoryName);
+                projectData.listViewShowThumbnails = showThumbnailsBtn.classList.contains('active');
+                saveProjectData(directoryName, projectData);
+            }
             layoutThumbnailsInList();
         });
         showCanvasNameBtn.addEventListener('click', () => {
             showCanvasNameBtn.classList.toggle('active');
+            if (directoryName) {
+                const projectData = loadProjectData(directoryName);
+                projectData.listViewShowCanvasName = showCanvasNameBtn.classList.contains('active');
+                saveProjectData(directoryName, projectData);
+            }
             layoutThumbnailsInList();
         });
         showNewFilenameBtn.addEventListener('click', () => {
             showNewFilenameBtn.classList.toggle('active');
+            if (directoryName) {
+                const projectData = loadProjectData(directoryName);
+                projectData.listViewShowNewFilename = showNewFilenameBtn.classList.contains('active');
+                saveProjectData(directoryName, projectData);
+            }
             layoutThumbnailsInList();
         });
 
@@ -2210,7 +2299,18 @@
             const showCanvasName = showCanvasNameBtn.classList.contains('active');
             const showNewFilename = showNewFilenameBtn.classList.contains('active');
 
-            thumbnailContainer.querySelectorAll('.thumbnail-wrapper').forEach(wrapper => {
+            const wrappers = Array.from(thumbnailContainer.querySelectorAll('.thumbnail-wrapper'));
+            
+            // Sort wrappers based on the current filename (new or original)
+            // This ensures the list is always alphabetically sorted.
+            wrappers.sort((a, b) => {
+                const nameA = a.dataset.fileName.toLowerCase();
+                const nameB = b.dataset.fileName.toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+            wrappers.forEach(wrapper => thumbnailContainer.appendChild(wrapper));
+
+            wrappers.forEach(wrapper => {
                 wrapper.style.position = 'relative';
                 wrapper.style.left = '0px';
                 wrapper.style.top = '0px';
@@ -2235,6 +2335,9 @@
                 // Reset inline display styles that may have been set by list view
                 const thumb = wrapper.querySelector('.thumbnail');
                 if (thumb) thumb.style.display = '';
+
+                const nameDiv = wrapper.querySelector('.thumbnail-name');
+                if (nameDiv) nameDiv.style.display = 'none';
 
                 const canvasNamePlaceholder = wrapper.querySelector('.canvas-name-placeholder');
                 if (canvasNamePlaceholder) canvasNamePlaceholder.style.display = '';
@@ -2362,6 +2465,11 @@
                 rightSidebar.style.display = 'none';
             }
             previewSizeSelector.value = projectData.previewThumbnailSize || '0.5';
+
+            // --- Restore List View Toggle State ---
+            showThumbnailsBtn.classList.toggle('active', projectData.listViewShowThumbnails);
+            showCanvasNameBtn.classList.toggle('active', projectData.listViewShowCanvasName);
+            showNewFilenameBtn.classList.toggle('active', projectData.listViewShowNewFilename);
 
             loadCustomButtons(projectData.customButtonTree, projectData.collapseState, projectData.buttonVisibility);
 
@@ -3816,11 +3924,13 @@
                 const buttonId = button.dataset.id;
                 const isCurrentlySelected = button.classList.contains('selected-for-removal');
                 const renameBtn = document.getElementById('rename-btn');
+                const buttonInfo = { id, name, fullButtonText, specialType, path };
 
                 if (isCurrentlySelected) {
                     buttonsForRemoval.delete(buttonId);
                     button.classList.remove('selected-for-removal');
                     delete renameBtn.dataset.lastClicked;
+                    updatePreviewPanel(null); // Clear the preview
                 } else {
                     document.querySelectorAll('#sidebar-scroll-container button.selected-for-removal').forEach(b => {
                         b.classList.remove('selected-for-removal');
@@ -3829,13 +3939,12 @@
                     buttonsForRemoval.add(buttonId);
                     button.classList.add('selected-for-removal');
                     
-                    const buttonInfo = { id, name, fullButtonText, specialType, path };
                     renameBtn.dataset.lastClicked = JSON.stringify(buttonInfo);
+                    updatePreviewPanel(buttonInfo);
                 }
 
                 updateSidebarActionButtonsState();
                 updateBottomBarInfo();
-                updatePreviewPanel();
                 highlightMatchingThumbnails(path, fullButtonText, !isCurrentlySelected, specialType === 'plusOne');
             };
 
@@ -3963,6 +4072,8 @@
             element.onmousedown = dragMouseDown;
 
             function dragMouseDown(e) {
+                if (element.closest('#preview-container')) return;
+
                 e = e || window.event;
                 e.preventDefault();
                 isDragging = false;
@@ -4426,14 +4537,13 @@
             }
         }
 
-        function updatePreviewPanel() {
+        function updatePreviewPanel(buttonData) {
             previewContainer.innerHTML = '';
-            const lastClickedButtonData = JSON.parse(renameBtn.dataset.lastClicked || 'null');
-            if (!lastClickedButtonData) {
+            if (!buttonData) {
                 return; // No button selected, so clear the panel and exit.
             }
 
-            const { path, fullButtonText, specialType } = lastClickedButtonData;
+            const { path, fullButtonText, specialType } = buttonData;
             const isCategoryOnly = specialType === 'plusOne';
             const username = projectUsernameInput.value.trim() || 'username';
             const category = path[0];
@@ -4468,8 +4578,7 @@
                 clone.style.top = 'auto';
                 clone.style.marginBottom = '10px';
                 clone.classList.remove('selected');
-
-                makeDraggable(clone);
+                
                 previewContainer.appendChild(clone);
             });
             
@@ -4507,14 +4616,20 @@
                     }
                 });
             } else {
-                // Clear inline styles from list view before applying grid
+                // GRID VIEW LOGIC
                 wrappers.forEach(wrapper => {
                     wrapper.classList.remove('list-view');
+                    // Reset/set styles for grid view display
                     const thumb = wrapper.querySelector('.thumbnail');
-                    if(thumb) {
-                        thumb.style.width = '';
-                        thumb.style.height = '';
-                    }
+                    if (thumb) thumb.style.display = ''; // Reset to default display (inline)
+
+                    const nameDiv = wrapper.querySelector('.thumbnail-name');
+                    if (nameDiv) nameDiv.style.display = 'none';
+                    
+                    const canvasNamePlaceholder = wrapper.querySelector('.canvas-name-placeholder');
+                    if (canvasNamePlaceholder) canvasNamePlaceholder.style.display = 'none';
+                    const newFilenamePlaceholder = wrapper.querySelector('.new-filename-placeholder');
+                    if (newFilenamePlaceholder) newFilenamePlaceholder.style.display = 'none';
                 });
 
                 const scale = parseFloat(size);
@@ -4533,16 +4648,13 @@
                     const scaledWidth = originalWidth * scale;
                     const scaledHeight = originalHeight * scale;
 
-                    if (nameDiv) {
-                        nameDiv.style.maxWidth = scaledWidth + 'px';
-                    }
-
-                    // Temporarily make the name visible to get its height for layout, then hide it again.
                     let nameHeight = 0;
                     if (nameDiv) {
-                        nameDiv.style.display = 'block'; // Make it visible to measure
+                        const originalDisplay = nameDiv.style.display;
+                        nameDiv.style.display = 'block'; // Ensure it's visible for measurement
+                        nameDiv.style.maxWidth = scaledWidth + 'px';
                         nameHeight = nameDiv.offsetHeight;
-                        nameDiv.style.display = ''; // Revert to stylesheet default ('none')
+                        nameDiv.style.display = originalDisplay;
                     }
 
                     const wrapperHeight = scaledHeight + nameHeight;
